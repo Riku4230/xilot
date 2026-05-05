@@ -5,6 +5,7 @@ const SELECTORS = {
 let hoverListeners: Array<{ el: Element; enter: () => void; leave: () => void }> = [];
 let scrollHandler: (() => void) | null = null;
 let scrollRafId = 0;
+let lastReportedBlockId = "";
 
 function isContextValid(): boolean {
   try {
@@ -42,19 +43,28 @@ export function setupScrollSync(): void {
     cancelAnimationFrame(scrollRafId);
     scrollRafId = requestAnimationFrame(() => {
       if (!isContextValid()) return;
-      const scrollTop = document.documentElement.scrollTop || document.body.scrollTop;
-      const scrollHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
-      const ratio = scrollHeight > 0 ? scrollTop / scrollHeight : 0;
-      chrome.runtime.sendMessage({ type: "SCROLL_RATIO", ratio }).catch(() => cleanup());
+
+      const allBlocks = document.querySelectorAll(`[data-translate-block-id]`);
+      let closestId = "";
+      let closestDist = Infinity;
+
+      for (const block of allBlocks) {
+        const rect = block.getBoundingClientRect();
+        const dist = Math.abs(rect.top - 80);
+        if (dist < closestDist) {
+          closestDist = dist;
+          closestId = (block as HTMLElement).dataset.translateBlockId || "";
+        }
+      }
+
+      if (closestId && closestId !== lastReportedBlockId) {
+        lastReportedBlockId = closestId;
+        chrome.runtime.sendMessage({ type: "SCROLL_SYNC", blockId: closestId }).catch(() => cleanup());
+      }
     });
   };
 
   window.addEventListener("scroll", scrollHandler, { passive: true });
-}
-
-export function scrollToRatio(ratio: number): void {
-  const scrollHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
-  window.scrollTo({ top: ratio * scrollHeight, behavior: "smooth" });
 }
 
 export function scrollToBlock(blockId: string): void {
@@ -74,6 +84,7 @@ function cleanup(): void {
     el.removeEventListener("mouseleave", leave);
   }
   hoverListeners = [];
+  lastReportedBlockId = "";
 }
 
 export { cleanup as cleanupScrollSync };

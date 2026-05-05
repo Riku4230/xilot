@@ -1,5 +1,8 @@
 import type { ArticleBlock, ArticleData, MessageType, TranslatedBlock, TranslationResult } from "../lib/types";
 import { QUICK_ACTIONS } from "../lib/prompts";
+import { marked } from "marked";
+
+marked.setOptions({ breaks: true, gfm: true });
 
 // --- Elements ---
 const tabs = document.querySelectorAll<HTMLButtonElement>(".tab");
@@ -14,14 +17,56 @@ const translationBlocks = document.getElementById("translation-blocks")!;
 const errorMessage = document.getElementById("error-message")!;
 const retryBtn = document.getElementById("retry-btn")!;
 
+const quickActionsEl = document.getElementById("quick-actions")!;
 const chatMessages = document.getElementById("chat-messages")!;
 const chatInput = document.getElementById("chat-input") as HTMLTextAreaElement;
 const chatSend = document.getElementById("chat-send") as HTMLButtonElement;
 
 // --- State ---
+let currentArticleUrl = "";
 let currentArticleText = "";
 let activeChatBubble: HTMLElement | null = null;
-let scrollSyncEnabled = true;
+let chatBusy = false;
+
+// --- Session Management ---
+interface ChatMessage { role: "user" | "assistant"; content: string }
+interface ChatSession { articleUrl: string; articleTitle: string; messages: ChatMessage[]; createdAt: number }
+
+let sessions: ChatSession[] = [];
+let activeSessionIndex = -1;
+
+function loadSessions(): void {
+  chrome.storage.local.get(["xilotSessions"], (result) => {
+    sessions = result.xilotSessions || [];
+  });
+}
+
+function saveSessions(): void {
+  chrome.storage.local.set({ xilotSessions: sessions });
+}
+
+function getOrCreateSession(url: string, title: string): ChatSession {
+  let idx = sessions.findIndex((s) => s.articleUrl === url);
+  if (idx === -1) {
+    sessions.unshift({ articleUrl: url, articleTitle: title, messages: [], createdAt: Date.now() });
+    idx = 0;
+    saveSessions();
+  }
+  activeSessionIndex = idx;
+  return sessions[idx];
+}
+
+function renderSessionHistory(): void {
+  chatMessages.innerHTML = "";
+  if (activeSessionIndex < 0) return;
+  const session = sessions[activeSessionIndex];
+  for (const msg of session.messages) {
+    appendChatBubble(msg.role, msg.content, false);
+  }
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+loadSessions();
 
 // --- Tab Switching ---
 function switchTab(tab: "translate" | "chat"): void {
@@ -59,6 +104,7 @@ function unlockScroll(): void {
 let streamingBuffer = "";
 let streamingBlocks: ArticleBlock[] = [];
 let translatedCount = 0;
+let finalizedUpTo = -1;
 let progressBarEl: HTMLElement | null = null;
 let progressInfoEl: HTMLElement | null = null;
 
@@ -85,7 +131,6 @@ function renderSkeleton(blocks: ArticleBlock[]): void {
     const div = document.createElement("div");
     div.className = "skeleton-block";
     div.dataset.blockId = block.blockId;
-
     if (block.type === "heading") {
       div.innerHTML = '<div class="skeleton-line heading"></div>';
     } else {
@@ -107,46 +152,43 @@ function createTranslatedElement(blockId: string, type: ArticleBlock["type"], te
   const div = document.createElement("div");
   div.className = "translation-block";
   div.dataset.blockId = blockId;
-
   switch (type) {
     case "title":
     case "heading": {
-      const h2 = document.createElement("h2");
-      h2.textContent = text;
+      const h2 = document.createElement("div");
+      h2.className = "md-content heading";
+      h2.innerHTML = renderMarkdown(`## ${text}`);
       div.appendChild(h2);
       break;
     }
     case "blockquote": {
-      const bq = document.createElement("blockquote");
-      bq.textContent = text;
+      const bq = document.createElement("div");
+      bq.className = "md-content";
+      bq.innerHTML = renderMarkdown(`> ${text}`);
       div.appendChild(bq);
       break;
     }
     case "list-item": {
       const li = document.createElement("div");
-      li.className = "list-item";
-      li.textContent = text;
+      li.className = "md-content";
+      li.innerHTML = renderMarkdown(`- ${text}`);
       div.appendChild(li);
       break;
     }
     default: {
-      const p = document.createElement("p");
-      p.textContent = text;
+      const p = document.createElement("div");
+      p.className = "md-content";
+      p.innerHTML = renderMarkdown(text);
       div.appendChild(p);
-      break;
     }
   }
   return div;
 }
 
-let finalizedUpTo = -1;
-
 function processStreamingDelta(delta: string): void {
   streamingBuffer += delta;
-
   const parts = streamingBuffer.split(/(?=\[\d+\])/);
   let maxSeen = -1;
-
   const parsed = new Map<number, string>();
   for (const part of parts) {
     const match = part.match(/^\[(\d+)\]\s*([\s\S]*)/);
@@ -156,7 +198,6 @@ function processStreamingDelta(delta: string): void {
       if (idx > maxSeen) maxSeen = idx;
     }
   }
-
   for (let i = finalizedUpTo + 1; i < maxSeen; i++) {
     if (i >= streamingBlocks.length) break;
     const text = (parsed.get(i) ?? "").trim();
@@ -169,11 +210,9 @@ function replaceBlockContent(idx: number, text: string): void {
   if (idx <= finalizedUpTo) return;
   const block = streamingBlocks[idx];
   if (!block) return;
-
   const skeleton = translationBlocks.querySelector(`.skeleton-block[data-block-id="${block.blockId}"]`);
   if (skeleton) {
-    const el = createTranslatedElement(block.blockId, block.type, text);
-    skeleton.replaceWith(el);
+    skeleton.replaceWith(createTranslatedElement(block.blockId, block.type, text));
     translatedCount++;
     finalizedUpTo = idx;
     if (translatedCount === 1) unlockScroll();
@@ -188,10 +227,7 @@ function updateProgress(): void {
   if (progressInfoEl) {
     if (translatedCount >= total) {
       progressInfoEl.textContent = "翻訳完了";
-      setTimeout(() => {
-        progressBarEl?.parentElement?.remove();
-        progressInfoEl?.remove();
-      }, 1500);
+      setTimeout(() => { progressBarEl?.parentElement?.remove(); progressInfoEl?.remove(); }, 1500);
     } else {
       progressInfoEl.textContent = `翻訳中... ${translatedCount}/${total}`;
     }
@@ -202,128 +238,163 @@ function finalizeTranslation(result: TranslationResult): void {
   currentArticleText = result.blocks.map((b) => b.original).join("\n\n");
   for (const block of result.blocks) {
     const skeleton = translationBlocks.querySelector(`.skeleton-block[data-block-id="${block.blockId}"]`);
-    if (skeleton) {
-      skeleton.replaceWith(createTranslatedElement(block.blockId, block.type, block.translated));
-    }
+    if (skeleton) skeleton.replaceWith(createTranslatedElement(block.blockId, block.type, block.translated));
   }
   translatedCount = streamingBlocks.length;
   updateProgress();
 }
 
-// --- Scroll sync (ratio-based) ---
+// --- Scroll sync (block-based) ---
 let userIsScrolling = false;
 let userScrollTimer: ReturnType<typeof setTimeout> | null = null;
-let syncSource: "browser" | "sidepanel" | null = null;
+let programmaticScroll = false;
 
 viewTranslate.addEventListener("scroll", () => {
-  if (syncSource === "browser") return;
+  if (programmaticScroll) return;
   userIsScrolling = true;
   if (userScrollTimer) clearTimeout(userScrollTimer);
-  userScrollTimer = setTimeout(() => { userIsScrolling = false; }, 2000);
+  userScrollTimer = setTimeout(() => { userIsScrolling = false; }, 3000);
 }, { passive: true });
 
-function syncSidepanelToRatio(ratio: number): void {
+function scrollSidepanelToBlock(blockId: string): void {
   if (userIsScrolling) return;
-  const scrollHeight = viewTranslate.scrollHeight - viewTranslate.clientHeight;
-  if (scrollHeight <= 0) return;
-  syncSource = "browser";
-  viewTranslate.scrollTop = ratio * scrollHeight;
-  setTimeout(() => { syncSource = null; }, 100);
+  const target = translationBlocks.querySelector(`[data-block-id="${blockId}"]`) as HTMLElement;
+  if (!target) return;
+  programmaticScroll = true;
+  viewTranslate.scrollTo({ top: target.offsetTop - 20, behavior: "smooth" });
+  setTimeout(() => { programmaticScroll = false; }, 500);
 }
 
 function highlightBlock(blockId: string): void {
-  document.querySelectorAll(".translation-block.active").forEach((el) => {
-    el.classList.remove("active");
-  });
+  document.querySelectorAll(".translation-block.active").forEach((el) => el.classList.remove("active"));
   if (!blockId) return;
   const target = translationBlocks.querySelector(`[data-block-id="${blockId}"]`);
-  if (target) {
-    target.classList.add("active");
-  }
+  if (target) target.classList.add("active");
 }
 
 function setupReverseScroll(): void {
   let rafId = 0;
   viewTranslate.addEventListener("scroll", () => {
-    if (syncSource === "browser") return;
+    if (programmaticScroll) return;
     cancelAnimationFrame(rafId);
     rafId = requestAnimationFrame(() => {
-      const scrollHeight = viewTranslate.scrollHeight - viewTranslate.clientHeight;
-      if (scrollHeight <= 0) return;
-      const ratio = viewTranslate.scrollTop / scrollHeight;
-      chrome.runtime.sendMessage({ type: "SIDEPANEL_SCROLL_RATIO", ratio } as any).catch(() => {});
+      const blocks = viewTranslate.querySelectorAll(".translation-block");
+      const scrollTop = viewTranslate.scrollTop + 20;
+      let closest: HTMLElement | null = null;
+      let closestDist = Infinity;
+      for (const block of blocks) {
+        const el = block as HTMLElement;
+        const dist = Math.abs(el.offsetTop - scrollTop);
+        if (dist < closestDist) { closestDist = dist; closest = el; }
+      }
+      if (closest?.dataset.blockId) {
+        chrome.runtime.sendMessage({ type: "SIDEPANEL_SCROLL", blockId: closest.dataset.blockId } as any).catch(() => {});
+      }
     });
   }, { passive: true });
 }
 
-// --- Quick Actions ---
-const quickActionsEl = document.getElementById("quick-actions")!;
+// --- Busy state (disables all chat input during processing) ---
+function setBusy(busy: boolean): void {
+  chatBusy = busy;
+  chatSend.disabled = busy;
+  chatInput.disabled = busy;
+  quickActionsEl.querySelectorAll<HTMLButtonElement>(".quick-action-btn").forEach((btn) => {
+    btn.disabled = busy;
+    btn.style.opacity = busy ? "0.4" : "1";
+    btn.style.pointerEvents = busy ? "none" : "auto";
+  });
+}
 
+// --- Quick Actions ---
 function initQuickActions(): void {
   quickActionsEl.innerHTML = "";
   for (const action of QUICK_ACTIONS) {
     const btn = document.createElement("button");
     btn.className = "quick-action-btn";
     btn.innerHTML = `<span class="qa-icon">${action.icon}</span>${action.label}`;
-    btn.addEventListener("click", () => executeQuickAction(action.id));
+    btn.addEventListener("click", () => {
+      if (chatBusy || !currentArticleText) return;
+      const prompt = action.buildPrompt(currentArticleText);
+      doSendChat(`${action.icon} ${action.label}`, prompt, "");
+    });
     quickActionsEl.appendChild(btn);
   }
 }
 
-function executeQuickAction(actionId: string): void {
-  const action = QUICK_ACTIONS.find((a) => a.id === actionId);
-  if (!action || !currentArticleText) return;
-
-  const prompt = action.buildPrompt(currentArticleText);
-
-  addChatMessage("user", `${action.icon} ${action.label}`);
-  activeChatBubble = startAssistantBubble();
-  activeChatBubble.innerHTML = '<span class="typing-dots">考え中</span>';
-  chatSend.disabled = true;
-
-  chrome.runtime.sendMessage({
-    type: "CHAT_SEND",
-    text: prompt,
-    articleContext: "",
-  } satisfies MessageType);
-}
-
 initQuickActions();
 
-// --- Chat ---
-function addChatMessage(role: "user" | "assistant", content: string): HTMLElement {
+// --- Chat (Markdown + Image support) ---
+function renderMarkdown(text: string): string {
+  return marked.parse(text) as string;
+}
+
+function appendChatBubble(role: "user" | "assistant", content: string, save: boolean): HTMLElement {
   const div = document.createElement("div");
   div.className = `chat-msg ${role}`;
-  div.textContent = content;
+  if (role === "assistant") {
+    div.innerHTML = renderMarkdown(content);
+    div.querySelectorAll("img").forEach((img) => addImageDownload(img));
+  } else {
+    div.textContent = content;
+  }
   chatMessages.appendChild(div);
   chatMessages.scrollTop = chatMessages.scrollHeight;
+
+  if (save && activeSessionIndex >= 0) {
+    sessions[activeSessionIndex].messages.push({ role, content });
+    saveSessions();
+  }
   return div;
+}
+
+function addImageDownload(img: HTMLImageElement): void {
+  const wrapper = document.createElement("div");
+  wrapper.className = "chat-image-wrapper";
+  img.parentElement?.insertBefore(wrapper, img);
+  wrapper.appendChild(img);
+
+  const dlBtn = document.createElement("button");
+  dlBtn.className = "image-download-btn";
+  dlBtn.textContent = "⬇ 保存";
+  dlBtn.addEventListener("click", () => {
+    const a = document.createElement("a");
+    a.href = img.src;
+    a.download = `xilot-${Date.now()}.png`;
+    a.click();
+  });
+  wrapper.appendChild(dlBtn);
 }
 
 function startAssistantBubble(): HTMLElement {
   const div = document.createElement("div");
   div.className = "chat-msg assistant";
+  div.innerHTML = '<span class="typing-dots">考え中</span>';
   chatMessages.appendChild(div);
   chatMessages.scrollTop = chatMessages.scrollHeight;
   return div;
 }
 
-async function sendChatMessage(): Promise<void> {
-  const text = chatInput.value.trim();
-  if (!text) return;
-  chatInput.value = "";
-  chatInput.style.height = "auto";
-  chatSend.disabled = true;
+function doSendChat(displayText: string, prompt: string, articleContext: string): void {
+  if (chatBusy) return;
+  setBusy(true);
 
-  addChatMessage("user", text);
+  appendChatBubble("user", displayText, true);
   activeChatBubble = startAssistantBubble();
-  activeChatBubble.innerHTML = '<span class="typing-dots">考え中</span>';
 
   chrome.runtime.sendMessage({
     type: "CHAT_SEND",
-    text,
-    articleContext: currentArticleText,
+    text: prompt,
+    articleContext,
   } satisfies MessageType);
+}
+
+async function sendChatMessage(): Promise<void> {
+  const text = chatInput.value.trim();
+  if (!text || chatBusy) return;
+  chatInput.value = "";
+  chatInput.style.height = "auto";
+  doSendChat(text, text, currentArticleText);
 }
 
 chatSend.addEventListener("click", sendChatMessage);
@@ -333,8 +404,7 @@ chatInput.addEventListener("compositionstart", () => { isComposing = true; });
 chatInput.addEventListener("compositionend", () => { isComposing = false; });
 
 chatInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !isComposing) {
-    if (e.shiftKey) return;
+  if (e.key === "Enter" && !isComposing && !e.shiftKey) {
     e.preventDefault();
     sendChatMessage();
   }
@@ -363,25 +433,21 @@ async function sendToContentScript(tabId: number): Promise<unknown> {
 // --- Start ---
 async function startTranslation(): Promise<void> {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) {
-    errorMessage.textContent = "アクティブなタブが見つかりません。";
-    showState("error");
-    return;
-  }
+  if (!tab?.id) { errorMessage.textContent = "アクティブなタブが見つかりません。"; showState("error"); return; }
 
   try {
     const response = await sendToContentScript(tab.id) as { type: string; data?: ArticleData };
-
     if (response?.type === "ARTICLE_DATA" && response.data) {
       showState("translating");
+      currentArticleUrl = response.data.url;
+      currentArticleText = response.data.blocks.map((b) => b.text).join("\n\n");
       articleMeta.innerHTML = `<div class="author">${response.data.author}</div>`;
       renderSkeleton(response.data.blocks);
-      currentArticleText = response.data.blocks.map((b) => b.text).join("\n\n");
 
-      chrome.runtime.sendMessage({
-        type: "TRANSLATE_REQUEST",
-        data: response.data,
-      } satisfies MessageType);
+      getOrCreateSession(currentArticleUrl, response.data.title);
+      renderSessionHistory();
+
+      chrome.runtime.sendMessage({ type: "TRANSLATE_REQUEST", data: response.data } satisfies MessageType);
     } else {
       errorMessage.textContent = "X記事が見つかりません。記事ページを開いてください。";
       showState("error");
@@ -393,6 +459,8 @@ async function startTranslation(): Promise<void> {
 }
 
 // --- Message Handling ---
+let streamingText = "";
+
 chrome.runtime.onMessage.addListener((message: MessageType) => {
   switch (message.type) {
     case "TRANSLATION_DELTA":
@@ -406,8 +474,9 @@ chrome.runtime.onMessage.addListener((message: MessageType) => {
       errorMessage.textContent = message.error;
       showState("error");
       break;
-    case "SCROLL_RATIO":
-      syncSidepanelToRatio(message.ratio);
+    case "SCROLL_SYNC":
+      scrollSidepanelToBlock(message.blockId);
+      highlightBlock(message.blockId);
       break;
     case "HOVER_BLOCK":
       highlightBlock(message.blockId);
@@ -415,18 +484,48 @@ chrome.runtime.onMessage.addListener((message: MessageType) => {
     case "CHAT_DELTA":
       if (activeChatBubble) {
         if (activeChatBubble.querySelector(".typing-dots")) {
-          activeChatBubble.textContent = "";
+          activeChatBubble.innerHTML = "";
+          streamingText = "";
         }
-        activeChatBubble.textContent += message.delta;
+        streamingText += message.delta;
+        activeChatBubble.innerHTML = renderMarkdown(streamingText);
         chatMessages.scrollTop = chatMessages.scrollHeight;
       }
       break;
+    case "IMAGE_GENERATING":
+      if (activeChatBubble) {
+        activeChatBubble.innerHTML = `
+          <div class="image-gen-status">
+            <div class="image-gen-spinner"></div>
+            <span>画像を生成中...</span>
+          </div>`;
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+      }
+      break;
+    case "IMAGE_COMPLETE": {
+      const imgHtml = `\n\n![生成画像](data:image/png;base64,${message.base64})\n\n`;
+      streamingText += imgHtml;
+      if (activeChatBubble) {
+        activeChatBubble.innerHTML = renderMarkdown(streamingText);
+        activeChatBubble.querySelectorAll("img").forEach((img) => addImageDownload(img as HTMLImageElement));
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+      }
+      break;
+    }
     case "CHAT_COMPLETE":
       if (activeChatBubble) {
-        activeChatBubble.textContent = message.text;
+        const finalContent = streamingText || message.text;
+        activeChatBubble.innerHTML = renderMarkdown(finalContent);
+        activeChatBubble.querySelectorAll("img").forEach((img) => addImageDownload(img as HTMLImageElement));
         activeChatBubble = null;
+
+        if (activeSessionIndex >= 0) {
+          sessions[activeSessionIndex].messages.push({ role: "assistant", content: finalContent });
+          saveSessions();
+        }
+        streamingText = "";
       }
-      chatSend.disabled = false;
+      setBusy(false);
       chatInput.focus();
       break;
     case "CHAT_ERROR":
@@ -435,7 +534,7 @@ chrome.runtime.onMessage.addListener((message: MessageType) => {
         activeChatBubble.classList.add("error");
         activeChatBubble = null;
       }
-      chatSend.disabled = false;
+      setBusy(false);
       break;
   }
 });

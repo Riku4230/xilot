@@ -43,6 +43,8 @@ export class CodexClient {
   private initialized = false;
   private onDelta: ((text: string) => void) | null = null;
   private onTurnComplete: (() => void) | null = null;
+  private onImageStart: (() => void) | null = null;
+  private onImageComplete: ((base64: string, revisedPrompt: string) => void) | null = null;
 
   constructor(config?: Partial<CodexConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -124,10 +126,26 @@ export class CodexClient {
     }
 
     const notif = msg as JsonRpcNotification;
+    const params = notif.params as Record<string, unknown> | undefined;
+    const item = params?.item as Record<string, unknown> | undefined;
+
     switch (notif.method) {
       case "item/agentMessage/delta":
-        if (this.onDelta && notif.params) {
-          this.onDelta(notif.params.delta as string);
+        if (this.onDelta && params) {
+          this.onDelta(params.delta as string);
+        }
+        break;
+      case "item/started":
+        if (item?.type === "imageGeneration") {
+          this.onImageStart?.();
+        }
+        break;
+      case "item/completed":
+        if (item?.type === "imageGeneration" && item.result) {
+          this.onImageComplete?.(
+            item.result as string,
+            (item.revisedPrompt as string) || "",
+          );
         }
         break;
       case "turn/completed":
@@ -159,12 +177,16 @@ export class CodexClient {
   async sendMessage(
     text: string,
     onDelta?: (text: string) => void,
+    onImageStart?: () => void,
+    onImageComplete?: (base64: string, revisedPrompt: string) => void,
   ): Promise<string> {
     if (!this.threadId) {
       await this.startThread();
     }
 
     this.onDelta = onDelta ?? null;
+    this.onImageStart = onImageStart ?? null;
+    this.onImageComplete = onImageComplete ?? null;
 
     let fullResponse = "";
     const originalOnDelta = this.onDelta;
@@ -186,6 +208,8 @@ export class CodexClient {
 
     this.onDelta = null;
     this.onTurnComplete = null;
+    this.onImageStart = null;
+    this.onImageComplete = null;
 
     return fullResponse;
   }
