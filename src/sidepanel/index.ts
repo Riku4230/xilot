@@ -550,8 +550,33 @@ async function startTranslation(): Promise<void> {
 // --- Message Handling ---
 let streamingText = "";
 
-chrome.runtime.onMessage.addListener((message: MessageType) => {
+chrome.runtime.onMessage.addListener((message: MessageType & { block?: TranslatedBlock; progress?: number; total?: number }) => {
   switch (message.type) {
+    case "TRANSLATION_CHUNK_DONE" as any:
+      if (message.block) {
+        const skeleton = translationBlocks.querySelector(`.skeleton-block[data-block-id="${message.block.blockId}"]`);
+        if (skeleton) {
+          skeleton.replaceWith(createTranslatedElement(message.block.blockId, message.block.type, message.block.translated));
+          translatedCount++;
+          if (translatedCount === 1) unlockScroll();
+        }
+        if (message.progress != null && message.total) {
+          const pct = Math.round((message.progress / message.total) * 100);
+          if (progressBarEl) progressBarEl.style.width = `${pct}%`;
+          if (progressInfoEl) progressInfoEl.textContent = `${message.progress} / ${message.total}`;
+          const bar = document.getElementById("progress-bar");
+          if (bar?.classList.contains("indeterminate")) {
+            bar.classList.remove("indeterminate");
+            const label = document.querySelector("#progress-info .label");
+            if (label) label.textContent = "翻訳中";
+          }
+          if (message.progress >= message.total) {
+            const wrapper = document.getElementById("progress-wrapper");
+            if (wrapper) setTimeout(() => wrapper.remove(), 1200);
+          }
+        }
+      }
+      break;
     case "TRANSLATION_DELTA":
       processStreamingDelta(message.delta);
       break;

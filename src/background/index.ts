@@ -4,6 +4,7 @@ import type { ArticleData, MessageType, TranslatedBlock, TranslationResult } fro
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 
 const DEFAULT_PROXY_TOKEN = "5f81c308b8f816ca72e3990e2cf77543";
+const CHUNK_SIZE = 10;
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.get(["codexToken"], (result) => {
@@ -13,28 +14,44 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
+// --- Pre-warm connection on startup ---
 let codex: CodexClient | null = null;
 let currentArticleText = "";
+let warmupPromise: Promise<CodexClient> | null = null;
+
+function warmup(): Promise<CodexClient> {
+  if (!warmupPromise) {
+    warmupPromise = (async () => {
+      const settings = await chrome.storage.local.get(["codexHost", "codexPort", "codexToken"]);
+      const host = settings.codexHost || "127.0.0.1";
+      const port = settings.codexPort || 4501;
+      const token = settings.codexToken || "";
+      codex = new CodexClient({ host, port, token });
+      await codex.connect();
+      console.log("[Xilot] Pre-warm connected");
+      return codex;
+    })().catch((e) => {
+      console.log("[Xilot] Pre-warm failed:", e);
+      warmupPromise = null;
+      throw e;
+    });
+  }
+  return warmupPromise;
+}
+
+warmup();
 
 async function ensureConnected(): Promise<CodexClient> {
   if (codex?.isConnected()) return codex;
-
-  const settings = await chrome.storage.local.get(["codexHost", "codexPort", "codexToken"]);
-  const host = settings.codexHost || "127.0.0.1";
-  const port = settings.codexPort || 4501;
-  const token = settings.codexToken || "";
-
-  codex?.disconnect();
-  codex = new CodexClient({ host, port, token });
-  await codex.connect();
-  broadcast({ type: "CODEX_STATUS", connected: true });
-  return codex;
+  warmupPromise = null;
+  return warmup();
 }
 
 function broadcast(msg: MessageType): void {
   chrome.runtime.sendMessage(msg).catch(() => {});
 }
 
+// --- Chunk-based parallel translation ---
 async function translateArticle(data: ArticleData): Promise<void> {
   let client: CodexClient;
   try {
@@ -49,26 +66,72 @@ async function translateArticle(data: ArticleData): Promise<void> {
 
   currentArticleText = data.blocks.map((b) => b.text).join("\n\n");
 
-  const prompt = `以下の英語の記事を日本語に翻訳してください。各段落を番号付きで翻訳してください。原文の段落構造を保持してください。見出しは見出しとして、引用は引用として翻訳してください。
+  const chunks: ArticleData["blocks"][] = [];
+  for (let i = 0; i < data.blocks.length; i += CHUNK_SIZE) {
+    chunks.push(data.blocks.slice(i, i + CHUNK_SIZE));
+  }
 
-記事タイトル: ${data.title}
+  const allTranslated: TranslatedBlock[] = new Array(data.blocks.length);
+  let completedBlocks = 0;
 
-${data.blocks.map((b, i) => `[${i}] ${b.text}`).join("\n\n")}
+  const translateChunk = async (chunk: ArticleData["blocks"][], chunkIndex: number) => {
+    const globalOffset = chunkIndex * CHUNK_SIZE;
+    const prompt = `以下の英語テキストを日本語に翻訳してください。各項目を番号付きで出力してください。
 
-各段落を [番号] に対応させて翻訳し、以下の形式で出力してください:
+${chunk.map((b, i) => `[${i}] ${b.text}`).join("\n\n")}
+
+出力形式:
 [0] 翻訳文
 [1] 翻訳文
 ...`;
 
-  try {
-    const response = await client.sendMessage(prompt, (delta) => {
-      broadcast({ type: "TRANSLATION_DELTA", blockId: "", delta });
-    });
+    try {
+      const response = await client.sendMessage(prompt);
+      const parsed = parseChunkResponse(response, chunk);
 
-    const translatedBlocks = parseTranslationResponse(response, data);
+      for (let i = 0; i < parsed.length; i++) {
+        const globalIdx = globalOffset + i;
+        if (globalIdx < data.blocks.length) {
+          allTranslated[globalIdx] = parsed[i];
+          completedBlocks++;
+          broadcast({
+            type: "TRANSLATION_CHUNK_DONE",
+            block: parsed[i],
+            progress: completedBlocks,
+            total: data.blocks.length,
+          } as any);
+        }
+      }
+    } catch (error) {
+      for (let i = 0; i < chunk.length; i++) {
+        const globalIdx = globalOffset + i;
+        if (globalIdx < data.blocks.length) {
+          const b = data.blocks[globalIdx];
+          allTranslated[globalIdx] = {
+            blockId: b.blockId,
+            type: b.type,
+            original: b.text,
+            translated: b.text,
+          };
+          completedBlocks++;
+        }
+      }
+    }
+  };
+
+  try {
+    for (let idx = 0; idx < chunks.length; idx++) {
+      await translateChunk([chunks[idx]], idx);
+    }
+
     broadcast({
       type: "TRANSLATION_RESULT",
-      data: { url: data.url, title: data.title, author: data.author, blocks: translatedBlocks },
+      data: {
+        url: data.url,
+        title: data.title,
+        author: data.author,
+        blocks: allTranslated.filter(Boolean),
+      },
     });
   } catch (error) {
     broadcast({
@@ -78,7 +141,8 @@ ${data.blocks.map((b, i) => `[${i}] ${b.text}`).join("\n\n")}
   }
 }
 
-function parseTranslationResponse(response: string, data: ArticleData): TranslatedBlock[] {
+function parseChunkResponse(response: string, blocks: ArticleData["blocks"][]): TranslatedBlock[] {
+  const flat = blocks.flat();
   const lines = response.split("\n");
   const translations = new Map<number, string>();
   let currentIndex = -1;
@@ -96,7 +160,7 @@ function parseTranslationResponse(response: string, data: ArticleData): Translat
   }
   if (currentIndex >= 0) translations.set(currentIndex, currentText.trim());
 
-  return data.blocks.map((block, i) => ({
+  return flat.map((block, i) => ({
     blockId: block.blockId,
     type: block.type,
     original: block.text,
