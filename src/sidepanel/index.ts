@@ -21,6 +21,11 @@ const quickActionsEl = document.getElementById("quick-actions")!;
 const chatMessages = document.getElementById("chat-messages")!;
 const chatInput = document.getElementById("chat-input") as HTMLTextAreaElement;
 const chatSend = document.getElementById("chat-send") as HTMLButtonElement;
+const sessionListBtn = document.getElementById("session-list-btn")!;
+const sessionListEl = document.getElementById("session-list")!;
+const sessionListItems = document.getElementById("session-list-items")!;
+const sessionTitleEl = document.getElementById("session-title")!;
+const newChatBtn = document.getElementById("new-chat-btn")!;
 
 // --- State ---
 let currentArticleUrl = "";
@@ -68,8 +73,80 @@ function renderSessionHistory(): void {
 
 loadSessions();
 
+// --- Session List UI ---
+function updateSessionTitle(): void {
+  if (activeSessionIndex >= 0) {
+    const s = sessions[activeSessionIndex];
+    sessionTitleEl.textContent = s.articleTitle || "新規チャット";
+  } else {
+    sessionTitleEl.textContent = "新規チャット";
+  }
+}
+
+function renderSessionList(): void {
+  sessionListItems.innerHTML = "";
+  if (sessions.length === 0) {
+    sessionListItems.innerHTML = '<div class="session-empty">セッションがありません</div>';
+    return;
+  }
+  sessions.forEach((s, idx) => {
+    const item = document.createElement("div");
+    item.className = `session-item${idx === activeSessionIndex ? " active" : ""}`;
+    const date = new Date(s.createdAt);
+    const dateStr = `${date.getMonth() + 1}/${date.getDate()} ${date.getHours()}:${String(date.getMinutes()).padStart(2, "0")}`;
+    item.innerHTML = `
+      <span class="session-icon">💬</span>
+      <div class="session-info">
+        <div class="session-article-title">${s.articleTitle || "無題"}</div>
+        <div class="session-meta">${s.messages.length}件 · ${dateStr}</div>
+      </div>`;
+    item.addEventListener("click", () => {
+      activeSessionIndex = idx;
+      renderSessionHistory();
+      updateSessionTitle();
+      sessionListEl.classList.add("hidden");
+    });
+    sessionListItems.appendChild(item);
+  });
+}
+
+sessionListBtn.addEventListener("click", () => {
+  const isHidden = sessionListEl.classList.contains("hidden");
+  if (isHidden) {
+    renderSessionList();
+    sessionListEl.classList.remove("hidden");
+  } else {
+    sessionListEl.classList.add("hidden");
+  }
+});
+
+newChatBtn.addEventListener("click", () => {
+  sessions.unshift({
+    articleUrl: currentArticleUrl,
+    articleTitle: sessions[activeSessionIndex]?.articleTitle || "新規チャット",
+    messages: [],
+    createdAt: Date.now(),
+  });
+  activeSessionIndex = 0;
+  saveSessions();
+  chatMessages.innerHTML = "";
+  updateSessionTitle();
+  sessionListEl.classList.add("hidden");
+  chatInput.focus();
+});
+
 // --- Tab Switching ---
+function updateTabLock(): void {
+  const chatTab = document.querySelector('.tab[data-tab="chat"]') as HTMLButtonElement;
+  if (chatTab) {
+    chatTab.disabled = isTranslating;
+    chatTab.style.opacity = isTranslating ? "0.4" : "1";
+    chatTab.style.cursor = isTranslating ? "not-allowed" : "pointer";
+  }
+}
+
 function switchTab(tab: "translate" | "chat"): void {
+  if (tab === "chat" && isTranslating) return;
   tabs.forEach((t) => t.classList.toggle("active", t.dataset.tab === tab));
   viewTranslate.classList.toggle("hidden", tab !== "translate");
   viewChat.classList.toggle("hidden", tab !== "chat");
@@ -93,11 +170,13 @@ function showState(state: "initial" | "translating" | "error"): void {
   isTranslating = state === "translating";
   viewTranslate.style.overflowY = isTranslating ? "hidden" : "auto";
   if (isTranslating) viewTranslate.scrollTop = 0;
+  updateTabLock();
 }
 
 function unlockScroll(): void {
   isTranslating = false;
   viewTranslate.style.overflowY = "auto";
+  updateTabLock();
 }
 
 // --- Skeleton + Streaming ---
@@ -115,17 +194,17 @@ function renderSkeleton(blocks: ArticleBlock[]): void {
   finalizedUpTo = -1;
   translationBlocks.innerHTML = "";
 
-  const progressBar = document.createElement("div");
-  progressBar.id = "progress-bar";
-  progressBar.innerHTML = '<div class="fill" style="width: 0%"></div>';
-  translationBlocks.appendChild(progressBar);
-  progressBarEl = progressBar.querySelector(".fill")!;
-
-  const progressInfo = document.createElement("div");
-  progressInfo.id = "progress-info";
-  progressInfo.textContent = `翻訳中... 0/${blocks.length}`;
-  translationBlocks.appendChild(progressInfo);
-  progressInfoEl = progressInfo;
+  const wrapper = document.createElement("div");
+  wrapper.id = "progress-wrapper";
+  wrapper.innerHTML = `
+    <div id="progress-bar"><div class="fill" style="width: 0%"></div></div>
+    <div id="progress-info">
+      <span class="label">翻訳中</span>
+      <span class="count">0 / ${blocks.length}</span>
+    </div>`;
+  translationBlocks.appendChild(wrapper);
+  progressBarEl = wrapper.querySelector(".fill")!;
+  progressInfoEl = wrapper.querySelector(".count")!;
 
   for (const block of blocks) {
     const div = document.createElement("div");
@@ -224,12 +303,11 @@ function updateProgress(): void {
   const total = streamingBlocks.length;
   const pct = Math.round((translatedCount / total) * 100);
   if (progressBarEl) progressBarEl.style.width = `${pct}%`;
-  if (progressInfoEl) {
-    if (translatedCount >= total) {
-      progressInfoEl.textContent = "翻訳完了";
-      setTimeout(() => { progressBarEl?.parentElement?.remove(); progressInfoEl?.remove(); }, 1500);
-    } else {
-      progressInfoEl.textContent = `翻訳中... ${translatedCount}/${total}`;
+  if (progressInfoEl) progressInfoEl.textContent = `${translatedCount} / ${total}`;
+  if (translatedCount >= total) {
+    const wrapper = document.getElementById("progress-wrapper");
+    if (wrapper) {
+      setTimeout(() => wrapper.remove(), 1200);
     }
   }
 }
@@ -446,6 +524,7 @@ async function startTranslation(): Promise<void> {
 
       getOrCreateSession(currentArticleUrl, response.data.title);
       renderSessionHistory();
+      updateSessionTitle();
 
       chrome.runtime.sendMessage({ type: "TRANSLATE_REQUEST", data: response.data } satisfies MessageType);
     } else {
@@ -494,20 +573,38 @@ chrome.runtime.onMessage.addListener((message: MessageType) => {
       break;
     case "IMAGE_GENERATING":
       if (activeChatBubble) {
-        activeChatBubble.innerHTML = `
-          <div class="image-gen-status">
-            <div class="image-gen-spinner"></div>
-            <span>画像を生成中...</span>
-          </div>`;
+        const existing = activeChatBubble.querySelector(".image-gen-status");
+        if (!existing) {
+          const status = document.createElement("div");
+          status.className = "image-gen-status";
+          status.innerHTML = '<div class="image-gen-spinner"></div><span>画像を生成中...</span>';
+          activeChatBubble.appendChild(status);
+        }
         chatMessages.scrollTop = chatMessages.scrollHeight;
       }
       break;
     case "IMAGE_COMPLETE": {
-      const imgHtml = `\n\n![生成画像](data:image/png;base64,${message.base64})\n\n`;
-      streamingText += imgHtml;
       if (activeChatBubble) {
-        activeChatBubble.innerHTML = renderMarkdown(streamingText);
-        activeChatBubble.querySelectorAll("img").forEach((img) => addImageDownload(img as HTMLImageElement));
+        const spinner = activeChatBubble.querySelector(".image-gen-status");
+        if (spinner) spinner.remove();
+
+        const wrapper = document.createElement("div");
+        wrapper.className = "chat-image-wrapper";
+        const img = document.createElement("img");
+        img.src = `data:image/png;base64,${message.base64}`;
+        wrapper.appendChild(img);
+        const dlBtn = document.createElement("button");
+        dlBtn.className = "image-download-btn";
+        dlBtn.textContent = "⬇ 保存";
+        dlBtn.addEventListener("click", () => {
+          const a = document.createElement("a");
+          a.href = img.src;
+          a.download = `xilot-${Date.now()}.png`;
+          a.click();
+        });
+        wrapper.appendChild(dlBtn);
+        activeChatBubble.appendChild(wrapper);
+        streamingText += `\n\n[画像生成済み]\n\n`;
         chatMessages.scrollTop = chatMessages.scrollHeight;
       }
       break;
@@ -520,7 +617,8 @@ chrome.runtime.onMessage.addListener((message: MessageType) => {
         activeChatBubble = null;
 
         if (activeSessionIndex >= 0) {
-          sessions[activeSessionIndex].messages.push({ role: "assistant", content: finalContent });
+          const safeContent = finalContent.replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/g, "[画像]");
+          sessions[activeSessionIndex].messages.push({ role: "assistant", content: safeContent });
           saveSessions();
         }
         streamingText = "";

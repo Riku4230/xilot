@@ -4,8 +4,12 @@ import type { MessageType } from "../lib/types";
 
 let lastUrl = location.href;
 
+function isArticleUrl(): boolean {
+  return /x\.com\/[^/]+\/(status|article)\//.test(location.href);
+}
+
 function handleArticleDetected(): void {
-  if (!isArticlePage()) return;
+  if (!isArticleUrl() || !isArticlePage()) return;
   setupScrollSync();
 }
 

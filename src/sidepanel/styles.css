@@ -91,25 +91,42 @@ body {
   margin-bottom: 8px;
 }
 
+#progress-wrapper {
+  background: #fafafa;
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+
 #progress-bar {
-  height: 3px;
-  background: #f0f0f0;
-  margin-bottom: 12px;
-  border-radius: 2px;
+  height: 4px;
+  background: #eee;
+  border-radius: 4px;
   overflow: hidden;
 }
 
 #progress-bar .fill {
   height: 100%;
-  background: linear-gradient(90deg, #1d9bf0, #4db8ff);
-  border-radius: 2px;
-  transition: width 0.3s ease;
+  background: linear-gradient(90deg, #34d399, #10b981);
+  border-radius: 4px;
+  transition: width 0.4s ease;
 }
 
 #progress-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   font-size: 12px;
-  color: #8899a6;
-  margin-bottom: 12px;
+  color: #6b7280;
+  margin-top: 8px;
+}
+
+#progress-info .label {
+  font-weight: 500;
+}
+
+#progress-info .count {
+  font-variant-numeric: tabular-nums;
 }
 
 #article-meta .author {
@@ -430,6 +447,115 @@ body {
 
 #retry-btn:hover {
   background: #292f33;
+}
+
+/* ===== Chat Header ===== */
+
+#chat-header {
+  flex-shrink: 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+#session-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+}
+
+#session-bar button {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid #e1e8ed;
+  background: #fff;
+  color: #536471;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+
+#session-bar button:hover {
+  background: #f7f9f9;
+  color: #0f1419;
+  border-color: #cfd9de;
+}
+
+#session-title {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 500;
+  color: #536471;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+}
+
+/* ===== Session List ===== */
+
+#session-list {
+  max-height: 240px;
+  overflow-y: auto;
+  border-bottom: 1px solid #f0f0f0;
+  background: #fafafa;
+}
+
+#session-list.hidden {
+  display: none !important;
+}
+
+.session-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+  transition: background 0.15s ease;
+}
+
+.session-item:hover {
+  background: #f0f7ff;
+}
+
+.session-item.active {
+  background: #e8f4fd;
+}
+
+.session-item .session-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.session-item .session-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.session-item .session-article-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: #0f1419;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-item .session-meta {
+  font-size: 11px;
+  color: #8899a6;
+  margin-top: 2px;
+}
+
+.session-empty {
+  padding: 20px 16px;
+  text-align: center;
+  color: #8899a6;
+  font-size: 13px;
 }
 
 /* ===== Quick Actions ===== */

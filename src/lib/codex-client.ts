@@ -51,12 +51,10 @@ export class CodexClient {
   }
 
   async connect(): Promise<void> {
-    const url = `ws://${this.config.host}:${this.config.port}`;
-    const protocols = this.config.token
-      ? [`bearer.${this.config.token}`]
-      : undefined;
+    const tokenParam = this.config.token ? `?token=${this.config.token}` : "";
+    const url = `ws://${this.config.host}:${this.config.port}/${tokenParam}`;
     return new Promise((resolve, reject) => {
-      this.ws = new WebSocket(url, protocols);
+      this.ws = new WebSocket(url);
 
       this.ws.onopen = async () => {
         try {

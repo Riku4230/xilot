@@ -3,6 +3,16 @@ import type { ArticleData, MessageType, TranslatedBlock, TranslationResult } fro
 
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 
+const DEFAULT_PROXY_TOKEN = "5f81c308b8f816ca72e3990e2cf77543";
+
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.storage.local.get(["codexToken"], (result) => {
+    if (!result.codexToken) {
+      chrome.storage.local.set({ codexToken: DEFAULT_PROXY_TOKEN });
+    }
+  });
+});
+
 let codex: CodexClient | null = null;
 let currentArticleText = "";
 

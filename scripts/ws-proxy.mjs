@@ -1,8 +1,19 @@
 import { createServer, request as httpRequest } from "http";
+import { readFileSync } from "fs";
+import { join } from "path";
 
 const PROXY_PORT = 4501;
 const CODEX_HOST = "127.0.0.1";
 const CODEX_PORT = 4500;
+
+const TOKEN_PATH = join(process.env.HOME || "~", ".codex", "xilot-proxy-token");
+let PROXY_TOKEN = "";
+try {
+  PROXY_TOKEN = readFileSync(TOKEN_PATH, "utf-8").trim();
+} catch {
+  console.error(`Token file not found: ${TOKEN_PATH}`);
+  process.exit(1);
+}
 
 const server = createServer((req, res) => {
   if (req.url === "/healthz") { res.writeHead(200); res.end("ok"); return; }
@@ -10,6 +21,15 @@ const server = createServer((req, res) => {
 });
 
 server.on("upgrade", (clientReq, clientSocket) => {
+  const url = new URL(clientReq.url || "/", `http://${clientReq.headers.host}`);
+  const token = url.searchParams.get("token") || "";
+
+  if (token !== PROXY_TOKEN) {
+    clientSocket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+    clientSocket.destroy();
+    return;
+  }
+
   const codexReq = httpRequest({
     host: CODEX_HOST,
     port: CODEX_PORT,
@@ -32,7 +52,6 @@ server.on("upgrade", (clientReq, clientSocket) => {
       `Sec-WebSocket-Accept: ${accept}\r\n` +
       "\r\n"
     );
-
     if (codexHead.length > 0) clientSocket.write(codexHead);
 
     codexSocket.pipe(clientSocket);
@@ -58,5 +77,5 @@ server.on("upgrade", (clientReq, clientSocket) => {
 });
 
 server.listen(PROXY_PORT, "127.0.0.1", () => {
-  console.log(`WS proxy: ws://127.0.0.1:${PROXY_PORT} -> ws://${CODEX_HOST}:${CODEX_PORT}`);
+  console.log(`WS proxy: ws://127.0.0.1:${PROXY_PORT} -> ws://${CODEX_HOST}:${CODEX_PORT} (auth required)`);
 });

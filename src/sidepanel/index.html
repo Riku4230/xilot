@@ -37,7 +37,21 @@
     </div>
 
     <div id="view-chat" class="view hidden">
-      <div id="quick-actions"></div>
+      <div id="chat-header">
+        <div id="quick-actions"></div>
+        <div id="session-bar">
+          <button id="session-list-btn" title="セッション一覧">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12M2 8h12M2 12h12"/></svg>
+          </button>
+          <span id="session-title">新規チャット</span>
+          <button id="new-chat-btn" title="新規チャット">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 3v10M3 8h10"/></svg>
+          </button>
+        </div>
+      </div>
+      <div id="session-list" class="hidden">
+        <div id="session-list-items"></div>
+      </div>
       <div id="chat-messages"></div>
       <div id="chat-input-area">
         <textarea id="chat-input" placeholder="この記事について質問する..." rows="1"></textarea>

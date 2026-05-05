@@ -49,6 +49,10 @@ export function extractArticle(): ArticleData | null {
   const seenOffsetKeys = new Set<string>();
   const blocks: ArticleBlock[] = [];
 
+  if (title) {
+    blocks.push({ blockId: "block-title", type: "title", text: title });
+  }
+
   contentBlocks.forEach((block, index) => {
     const offsetKey = block.getAttribute("data-offset-key") ?? "";
     if (offsetKey && seenOffsetKeys.has(offsetKey)) return;
