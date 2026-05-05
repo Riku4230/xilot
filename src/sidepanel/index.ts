@@ -105,6 +105,8 @@ function renderSessionList(): void {
       renderSessionHistory();
       updateSessionTitle();
       sessionListEl.classList.add("hidden");
+      activeChatBubble = null;
+      setBusy(false);
     });
     sessionListItems.appendChild(item);
   });
@@ -132,6 +134,8 @@ newChatBtn.addEventListener("click", () => {
   chatMessages.innerHTML = "";
   updateSessionTitle();
   sessionListEl.classList.add("hidden");
+  activeChatBubble = null;
+  setBusy(false);
   chatInput.focus();
 });
 
@@ -197,10 +201,10 @@ function renderSkeleton(blocks: ArticleBlock[]): void {
   const wrapper = document.createElement("div");
   wrapper.id = "progress-wrapper";
   wrapper.innerHTML = `
-    <div id="progress-bar"><div class="fill" style="width: 0%"></div></div>
+    <div id="progress-bar" class="indeterminate"><div class="fill"></div></div>
     <div id="progress-info">
-      <span class="label">翻訳中</span>
-      <span class="count">0 / ${blocks.length}</span>
+      <span class="label">AIが翻訳を準備中...</span>
+      <span class="count"></span>
     </div>`;
   translationBlocks.appendChild(wrapper);
   progressBarEl = wrapper.querySelector(".fill")!;
@@ -294,7 +298,13 @@ function replaceBlockContent(idx: number, text: string): void {
     skeleton.replaceWith(createTranslatedElement(block.blockId, block.type, text));
     translatedCount++;
     finalizedUpTo = idx;
-    if (translatedCount === 1) unlockScroll();
+    if (translatedCount === 1) {
+      unlockScroll();
+      const bar = document.getElementById("progress-bar");
+      if (bar) bar.classList.remove("indeterminate");
+      const label = document.querySelector("#progress-info .label");
+      if (label) label.textContent = "翻訳中";
+    }
     updateProgress();
   }
 }
@@ -571,42 +581,56 @@ chrome.runtime.onMessage.addListener((message: MessageType) => {
         chatMessages.scrollTop = chatMessages.scrollHeight;
       }
       break;
-    case "IMAGE_GENERATING":
-      if (activeChatBubble) {
-        const existing = activeChatBubble.querySelector(".image-gen-status");
-        if (!existing) {
-          const status = document.createElement("div");
-          status.className = "image-gen-status";
-          status.innerHTML = '<div class="image-gen-spinner"></div><span>画像を生成中...</span>';
-          activeChatBubble.appendChild(status);
-        }
+    case "IMAGE_GENERATING": {
+      const existing = chatMessages.querySelector(".image-gen-bubble");
+      if (!existing) {
+        const bubble = document.createElement("div");
+        bubble.className = "chat-msg assistant image-gen-bubble";
+        bubble.innerHTML = `
+          <div class="image-gen-status">
+            <div class="image-gen-spinner"></div>
+            <span>画像を生成中...</span>
+          </div>
+          <div class="image-gen-hint">通常10〜20秒かかります</div>`;
+        chatMessages.appendChild(bubble);
         chatMessages.scrollTop = chatMessages.scrollHeight;
       }
       break;
+    }
     case "IMAGE_COMPLETE": {
-      if (activeChatBubble) {
-        const spinner = activeChatBubble.querySelector(".image-gen-status");
-        if (spinner) spinner.remove();
+      const genBubble = chatMessages.querySelector(".image-gen-bubble");
+      if (genBubble) genBubble.remove();
 
-        const wrapper = document.createElement("div");
-        wrapper.className = "chat-image-wrapper";
-        const img = document.createElement("img");
-        img.src = `data:image/png;base64,${message.base64}`;
-        wrapper.appendChild(img);
-        const dlBtn = document.createElement("button");
-        dlBtn.className = "image-download-btn";
-        dlBtn.textContent = "⬇ 保存";
-        dlBtn.addEventListener("click", () => {
-          const a = document.createElement("a");
-          a.href = img.src;
-          a.download = `xilot-${Date.now()}.png`;
-          a.click();
-        });
-        wrapper.appendChild(dlBtn);
-        activeChatBubble.appendChild(wrapper);
-        streamingText += `\n\n[画像生成済み]\n\n`;
-        chatMessages.scrollTop = chatMessages.scrollHeight;
+      const imgBubble = document.createElement("div");
+      imgBubble.className = "chat-msg assistant";
+
+      const wrapper = document.createElement("div");
+      wrapper.className = "chat-image-wrapper";
+      const img = document.createElement("img");
+      img.src = `data:image/png;base64,${message.base64}`;
+      wrapper.appendChild(img);
+      const dlBtn = document.createElement("button");
+      dlBtn.className = "image-download-btn";
+      dlBtn.textContent = "⬇ 保存";
+      dlBtn.addEventListener("click", () => {
+        const a = document.createElement("a");
+        a.href = img.src;
+        a.download = `xilot-${Date.now()}.png`;
+        a.click();
+      });
+      wrapper.appendChild(dlBtn);
+      imgBubble.appendChild(wrapper);
+
+      if (message.revisedPrompt) {
+        const caption = document.createElement("p");
+        caption.className = "image-caption";
+        caption.textContent = message.revisedPrompt;
+        imgBubble.appendChild(caption);
       }
+
+      chatMessages.appendChild(imgBubble);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+      streamingText += "\n\n[画像生成済み]\n\n";
       break;
     }
     case "CHAT_COMPLETE":

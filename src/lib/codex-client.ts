@@ -127,6 +127,8 @@ export class CodexClient {
     const params = notif.params as Record<string, unknown> | undefined;
     const item = params?.item as Record<string, unknown> | undefined;
 
+    console.log("[Xilot]", notif.method, item?.type || "", item?.status || "");
+
     switch (notif.method) {
       case "item/agentMessage/delta":
         if (this.onDelta && params) {

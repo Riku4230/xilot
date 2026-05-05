@@ -3,23 +3,42 @@ import { cleanupScrollSync, scrollToBlock, setupScrollSync } from "./scroll-sync
 import type { MessageType } from "../lib/types";
 
 let lastUrl = location.href;
+let urlCheckInterval: ReturnType<typeof setInterval> | null = null;
+let mutationObserver: MutationObserver | null = null;
+
+function isContextValid(): boolean {
+  try {
+    return !!chrome.runtime?.id;
+  } catch {
+    shutdown();
+    return false;
+  }
+}
 
 function isArticleUrl(): boolean {
   return /x\.com\/[^/]+\/(status|article)\//.test(location.href);
 }
 
 function handleArticleDetected(): void {
+  if (!isContextValid()) return;
   if (!isArticleUrl() || !isArticlePage()) return;
   setupScrollSync();
 }
 
 function checkUrlChange(): void {
+  if (!isContextValid()) return;
   const currentUrl = location.href;
   if (currentUrl !== lastUrl) {
     lastUrl = currentUrl;
     cleanupScrollSync();
     setTimeout(() => handleArticleDetected(), 1000);
   }
+}
+
+function shutdown(): void {
+  if (urlCheckInterval) { clearInterval(urlCheckInterval); urlCheckInterval = null; }
+  if (mutationObserver) { mutationObserver.disconnect(); mutationObserver = null; }
+  cleanupScrollSync();
 }
 
 chrome.runtime.onMessage.addListener(
@@ -40,8 +59,8 @@ chrome.runtime.onMessage.addListener(
   },
 );
 
-observeArticleChanges(handleArticleDetected);
-setInterval(checkUrlChange, 500);
+mutationObserver = observeArticleChanges(handleArticleDetected);
+urlCheckInterval = setInterval(checkUrlChange, 500);
 
 if (isArticlePage()) {
   handleArticleDetected();

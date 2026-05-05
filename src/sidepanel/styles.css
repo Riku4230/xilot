@@ -112,6 +112,17 @@ body {
   transition: width 0.4s ease;
 }
 
+#progress-bar.indeterminate .fill {
+  width: 40% !important;
+  animation: indeterminate 1.4s ease-in-out infinite;
+}
+
+@keyframes indeterminate {
+  0% { transform: translateX(-100%); }
+  50% { transform: translateX(150%); }
+  100% { transform: translateX(-100%); }
+}
+
 #progress-info {
   display: flex;
   justify-content: space-between;
@@ -403,22 +414,40 @@ body {
 
 /* ===== Image Generation Status ===== */
 
+.image-gen-bubble {
+  background: linear-gradient(135deg, #f0f7ff, #e8f4fd) !important;
+  border: 1px solid #d1e9ff;
+}
+
 .image-gen-status {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 0;
-  color: #536471;
+  color: #1d9bf0;
   font-size: 14px;
+  font-weight: 500;
+}
+
+.image-gen-hint {
+  font-size: 12px;
+  color: #8899a6;
+  margin-top: 6px;
 }
 
 .image-gen-spinner {
-  width: 20px;
-  height: 20px;
-  border: 2px solid #e1e8ed;
+  width: 18px;
+  height: 18px;
+  border: 2px solid #d1e9ff;
   border-top-color: #1d9bf0;
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
+}
+
+.image-caption {
+  font-size: 12px;
+  color: #8899a6;
+  margin-top: 8px;
+  font-style: italic;
 }
 
 @keyframes spin {
