@@ -1,0 +1,22 @@
+{
+  "name": "x_article_translate",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "ENTRY=sidepanel vite build && ENTRY=content vite build && ENTRY=background vite build && node scripts/postbuild.mjs",
+    "preview": "vite preview"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "typescript": "^6.0.3",
+    "vite": "^8.0.10"
+  },
+  "dependencies": {
+    "ws": "^8.20.0"
+  }
+}
