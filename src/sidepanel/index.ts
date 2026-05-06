@@ -457,7 +457,7 @@ function addImageDownload(img: HTMLImageElement): void {
 function startAssistantBubble(): HTMLElement {
   const div = document.createElement("div");
   div.className = "chat-msg assistant";
-  div.innerHTML = '<span class="typing-dots">考え中</span>';
+  div.innerHTML = '<div class="thinking-indicator"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>';
   chatMessages.appendChild(div);
   chatMessages.scrollTop = chatMessages.scrollHeight;
   return div;
@@ -506,7 +506,7 @@ chatInput.addEventListener("input", () => {
 // --- Content Script injection ---
 async function injectContentScript(tabId: number): Promise<void> {
   await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
-  await new Promise((r) => setTimeout(r, 300));
+  await new Promise((r) => setTimeout(r, 50));
 }
 
 async function sendToContentScript(tabId: number): Promise<unknown> {
@@ -529,7 +529,9 @@ async function startTranslation(): Promise<void> {
       showState("translating");
       currentArticleUrl = response.data.url;
       currentArticleText = response.data.blocks.map((b) => b.text).join("\n\n");
-      articleMeta.innerHTML = `<div class="author">${response.data.author}</div>`;
+      articleMeta.innerHTML = response.data.author
+        ? `<div class="author">${response.data.author}</div>`
+        : "";
       renderSkeleton(response.data.blocks);
 
       getOrCreateSession(currentArticleUrl, response.data.title);
@@ -597,7 +599,7 @@ chrome.runtime.onMessage.addListener((message: MessageType & { block?: Translate
       break;
     case "CHAT_DELTA":
       if (activeChatBubble) {
-        if (activeChatBubble.querySelector(".typing-dots")) {
+        if (activeChatBubble.querySelector(".thinking-indicator")) {
           activeChatBubble.innerHTML = "";
           streamingText = "";
         }

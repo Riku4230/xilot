@@ -174,6 +174,14 @@ export class CodexClient {
     return this.threadId;
   }
 
+  async ensureThread(): Promise<void> {
+    if (!this.threadId) await this.startThread();
+  }
+
+  async sendMessageNewThread(text: string): Promise<string> {
+    return this.sendMessage(text);
+  }
+
   async sendMessage(
     text: string,
     onDelta?: (text: string) => void,
