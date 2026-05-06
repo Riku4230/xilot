@@ -332,7 +332,7 @@ function finalizeTranslation(result: TranslationResult): void {
   updateProgress();
 }
 
-// --- Scroll sync (block-based) ---
+// --- Scroll sync (ratio-based, instant) ---
 let userIsScrolling = false;
 let userScrollTimer: ReturnType<typeof setTimeout> | null = null;
 let programmaticScroll = false;
@@ -341,16 +341,16 @@ viewTranslate.addEventListener("scroll", () => {
   if (programmaticScroll) return;
   userIsScrolling = true;
   if (userScrollTimer) clearTimeout(userScrollTimer);
-  userScrollTimer = setTimeout(() => { userIsScrolling = false; }, 3000);
+  userScrollTimer = setTimeout(() => { userIsScrolling = false; }, 2000);
 }, { passive: true });
 
-function scrollSidepanelToBlock(blockId: string): void {
+function syncSidepanelToRatio(ratio: number): void {
   if (userIsScrolling) return;
-  const target = translationBlocks.querySelector(`[data-block-id="${blockId}"]`) as HTMLElement;
-  if (!target) return;
+  const max = viewTranslate.scrollHeight - viewTranslate.clientHeight;
+  if (max <= 0) return;
   programmaticScroll = true;
-  viewTranslate.scrollTo({ top: target.offsetTop - 20, behavior: "smooth" });
-  setTimeout(() => { programmaticScroll = false; }, 500);
+  viewTranslate.scrollTop = ratio * max;
+  requestAnimationFrame(() => { programmaticScroll = false; });
 }
 
 function highlightBlock(blockId: string): void {
@@ -366,18 +366,10 @@ function setupReverseScroll(): void {
     if (programmaticScroll) return;
     cancelAnimationFrame(rafId);
     rafId = requestAnimationFrame(() => {
-      const blocks = viewTranslate.querySelectorAll(".translation-block");
-      const scrollTop = viewTranslate.scrollTop + 20;
-      let closest: HTMLElement | null = null;
-      let closestDist = Infinity;
-      for (const block of blocks) {
-        const el = block as HTMLElement;
-        const dist = Math.abs(el.offsetTop - scrollTop);
-        if (dist < closestDist) { closestDist = dist; closest = el; }
-      }
-      if (closest?.dataset.blockId) {
-        chrome.runtime.sendMessage({ type: "SIDEPANEL_SCROLL", blockId: closest.dataset.blockId } as any).catch(() => {});
-      }
+      const max = viewTranslate.scrollHeight - viewTranslate.clientHeight;
+      if (max <= 0) return;
+      const ratio = viewTranslate.scrollTop / max;
+      chrome.runtime.sendMessage({ type: "SIDEPANEL_SCROLL_RATIO", ratio } as any).catch(() => {});
     });
   }, { passive: true });
 }
@@ -590,8 +582,8 @@ chrome.runtime.onMessage.addListener((message: MessageType & { block?: Translate
       errorMessage.textContent = message.error;
       showState("error");
       break;
-    case "SCROLL_SYNC":
-      scrollSidepanelToBlock(message.blockId);
+    case "SCROLL_RATIO" as any:
+      syncSidepanelToRatio((message as any).ratio);
       highlightBlock(message.blockId);
       break;
     case "HOVER_BLOCK":

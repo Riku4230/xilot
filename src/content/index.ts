@@ -1,5 +1,5 @@
 import { extractArticle, isArticlePage, observeArticleChanges } from "./extractor";
-import { cleanupScrollSync, scrollToBlock, setupScrollSync } from "./scroll-sync";
+import { cleanupScrollSync, scrollToBlock, scrollToRatio, setupScrollSync } from "./scroll-sync";
 import type { MessageType } from "../lib/types";
 
 let lastUrl = location.href;
@@ -55,6 +55,10 @@ chrome.runtime.onMessage.addListener(
 
     if (message.type === "SCROLL_TO_BLOCK") {
       scrollToBlock(message.blockId);
+    }
+
+    if ((message as any).type === "SCROLL_TO_RATIO") {
+      scrollToRatio((message as any).ratio);
     }
   },
 );

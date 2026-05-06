@@ -200,17 +200,17 @@ ${articleContext}
 }
 
 chrome.runtime.onMessage.addListener((message: MessageType) => {
-  if (message.type === "SCROLL_SYNC") broadcast(message);
+  if ((message as any).type === "SCROLL_RATIO") broadcast(message);
   if (message.type === "HOVER_BLOCK") broadcast(message);
   if (message.type === "TRANSLATE_REQUEST") translateArticle(message.data);
   if (message.type === "CHAT_SEND") handleChat(message.text, message.articleContext || currentArticleText);
 
-  if (message.type === "SIDEPANEL_SCROLL") {
+  if ((message as any).type === "SIDEPANEL_SCROLL_RATIO") {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0]?.id) {
         chrome.tabs.sendMessage(tabs[0].id, {
-          type: "SCROLL_TO_BLOCK",
-          blockId: (message as any).blockId,
+          type: "SCROLL_TO_RATIO",
+          ratio: (message as any).ratio,
         }).catch(() => {});
       }
     });
