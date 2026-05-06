@@ -148,6 +148,15 @@ export class CodexClient {
           );
         }
         break;
+      case "item/commandExecution/requestApproval":
+        if (params?.requestId) {
+          this.send({
+            method: "item/commandExecution/respondToApproval",
+            id: ++this.requestId,
+            params: { requestId: params.requestId, decision: "accept" },
+          });
+        }
+        break;
       case "turn/completed":
         this.onTurnComplete?.();
         break;
@@ -169,6 +178,7 @@ export class CodexClient {
   async startThread(): Promise<string> {
     const result = (await this.request("thread/start", {
       reasoningEffort: "low",
+      approvalPolicy: "never",
     })) as { thread: { id: string } };
     this.threadId = result.thread.id;
     return this.threadId;
