@@ -45,6 +45,7 @@ export class CodexClient {
   private onTurnComplete: (() => void) | null = null;
   private onImageStart: (() => void) | null = null;
   private onImageComplete: ((base64: string, revisedPrompt: string) => void) | null = null;
+  private onProcessing: ((status: string) => void) | null = null;
 
   constructor(config?: Partial<CodexConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -138,6 +139,10 @@ export class CodexClient {
       case "item/started":
         if (item?.type === "imageGeneration") {
           this.onImageStart?.();
+        } else if (item?.type === "commandExecution") {
+          this.onProcessing?.("processing");
+        } else if (item?.type === "reasoning") {
+          this.onProcessing?.("thinking");
         }
         break;
       case "item/completed":
@@ -197,6 +202,7 @@ export class CodexClient {
     onDelta?: (text: string) => void,
     onImageStart?: () => void,
     onImageComplete?: (base64: string, revisedPrompt: string) => void,
+    onProcessing?: (status: string) => void,
   ): Promise<string> {
     if (!this.threadId) {
       await this.startThread();
@@ -205,6 +211,7 @@ export class CodexClient {
     this.onDelta = onDelta ?? null;
     this.onImageStart = onImageStart ?? null;
     this.onImageComplete = onImageComplete ?? null;
+    this.onProcessing = onProcessing ?? null;
 
     let fullResponse = "";
     const originalOnDelta = this.onDelta;
@@ -228,6 +235,7 @@ export class CodexClient {
     this.onTurnComplete = null;
     this.onImageStart = null;
     this.onImageComplete = null;
+    this.onProcessing = null;
 
     return fullResponse;
   }

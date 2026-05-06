@@ -600,6 +600,15 @@ chrome.runtime.onMessage.addListener((message: MessageType & { block?: Translate
         chatMessages.scrollTop = chatMessages.scrollHeight;
       }
       break;
+    case "CHAT_PROCESSING" as any:
+      if (activeChatBubble && !activeChatBubble.querySelector(".thinking-indicator")) {
+        const dots = document.createElement("div");
+        dots.className = "thinking-indicator";
+        dots.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
+        activeChatBubble.appendChild(dots);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+      }
+      break;
     case "IMAGE_GENERATING": {
       const existing = chatMessages.querySelector(".image-gen-bubble");
       if (!existing) {

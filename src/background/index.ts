@@ -192,6 +192,7 @@ ${articleContext}
       (delta) => broadcast({ type: "CHAT_DELTA", delta }),
       () => broadcast({ type: "IMAGE_GENERATING" }),
       (base64, revisedPrompt) => broadcast({ type: "IMAGE_COMPLETE", base64, revisedPrompt }),
+      (status) => broadcast({ type: "CHAT_PROCESSING", status } as any),
     );
     broadcast({ type: "CHAT_COMPLETE", text: response });
   } catch (error) {
