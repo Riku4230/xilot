@@ -170,13 +170,18 @@ async function handleChat(text: string, articleContext: string): Promise<void> {
   }
 
   const prompt = articleContext
-    ? `以下の記事の内容を踏まえて質問に答えてください。必要に応じてWeb検索も行ってください。
+    ? `あなたはユーザーのリサーチアシスタントです。以下の記事の内容を踏まえて質問に答えてください。
+
+ルール:
+- 記事に書かれていることはそのまま回答
+- 記事に書かれていないこと、最新の情報、ユーザーが知らないことについて聞かれた場合はWeb検索を行って回答
+- 回答は日本語で
 
 記事の内容:
 ${articleContext}
 
 ユーザーの質問: ${text}`
-    : text;
+    : `以下の質問に日本語で答えてください。必要に応じてWeb検索を行ってください。\n\n${text}`;
 
   try {
     const response = await client.sendMessage(
