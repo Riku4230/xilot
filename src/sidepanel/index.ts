@@ -1,4 +1,14 @@
-import type { ArticleBlock, ArticleData, MessageType, TranslatedBlock, TranslationResult } from "../lib/types";
+import type {
+  ArticleBlock,
+  ArticleData,
+  ChatMessage,
+  ChatSession,
+  LocalSavePayload,
+  MessageType,
+  SessionImage,
+  TranslatedBlock,
+  TranslationResult,
+} from "../lib/types";
 import { QUICK_ACTIONS } from "../lib/prompts";
 import { marked } from "marked";
 
@@ -8,6 +18,7 @@ marked.setOptions({ breaks: true, gfm: true });
 const tabs = document.querySelectorAll<HTMLButtonElement>(".tab");
 const viewTranslate = document.getElementById("view-translate")!;
 const viewChat = document.getElementById("view-chat")!;
+const viewSave = document.getElementById("view-save")!;
 
 const stateInitial = document.getElementById("state-initial")!;
 const stateTranslating = document.getElementById("state-translating")!;
@@ -27,22 +38,62 @@ const sessionListItems = document.getElementById("session-list-items")!;
 const sessionTitleEl = document.getElementById("session-title")!;
 const newChatBtn = document.getElementById("new-chat-btn")!;
 
+const savePathInput = document.getElementById("save-path-input") as HTMLInputElement;
+const savePathResetBtn = document.getElementById("save-path-reset") as HTMLButtonElement;
+const saveOnlyToggle = document.getElementById("save-only-toggle") as HTMLInputElement;
+const saveCurrentBtn = document.getElementById("save-current-btn") as HTMLButtonElement;
+const saveSummaryEl = document.getElementById("save-summary")!;
+const saveStatusEl = document.getElementById("save-status")!;
+
 // --- State ---
 let currentArticleUrl = "";
 let currentArticleText = "";
+let currentArticleData: ArticleData | null = null;
+let currentTranslationResult: TranslationResult | null = null;
 let activeChatBubble: HTMLElement | null = null;
 let chatBusy = false;
+let saveBusy = false;
+let saveBaseDir = "~/xilot";
+let saveOnlyMode = false;
+let pendingAssistantImages: SessionImage[] = [];
+const DEFAULT_PROXY_TOKEN = "5f81c308b8f816ca72e3990e2cf77543";
 
 // --- Session Management ---
-interface ChatMessage { role: "user" | "assistant"; content: string }
-interface ChatSession { articleUrl: string; articleTitle: string; messages: ChatMessage[]; createdAt: number }
-
 let sessions: ChatSession[] = [];
 let activeSessionIndex = -1;
 
-function loadSessions(): void {
-  chrome.storage.local.get(["xilotSessions"], (result) => {
-    sessions = result.xilotSessions || [];
+function makeId(prefix: string): string {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeMessage(message: Partial<ChatMessage>): ChatMessage {
+  return {
+    role: message.role === "assistant" ? "assistant" : "user",
+    content: message.content || "",
+    createdAt: message.createdAt || Date.now(),
+    images: message.images || [],
+  };
+}
+
+function normalizeSession(session: Partial<ChatSession>): ChatSession {
+  const createdAt = session.createdAt || Date.now();
+  return {
+    sessionId: session.sessionId || makeId("session"),
+    articleUrl: session.articleUrl || "",
+    articleTitle: session.articleTitle || "新規チャット",
+    messages: (session.messages || []).map(normalizeMessage),
+    createdAt,
+    updatedAt: session.updatedAt || createdAt,
+  };
+}
+
+function loadSessions(): Promise<void> {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(["xilotSessions"], (result) => {
+      const storedSessions = Array.isArray(result.xilotSessions) ? result.xilotSessions : [];
+      sessions = storedSessions.map(normalizeSession);
+      resolve();
+    });
   });
 }
 
@@ -50,10 +101,20 @@ function saveSessions(): void {
   chrome.storage.local.set({ xilotSessions: sessions });
 }
 
+const sessionsReady = loadSessions();
+
 function getOrCreateSession(url: string, title: string): ChatSession {
   let idx = sessions.findIndex((s) => s.articleUrl === url);
   if (idx === -1) {
-    sessions.unshift({ articleUrl: url, articleTitle: title, messages: [], createdAt: Date.now() });
+    const now = Date.now();
+    sessions.unshift({
+      sessionId: makeId("session"),
+      articleUrl: url,
+      articleTitle: title,
+      messages: [],
+      createdAt: now,
+      updatedAt: now,
+    });
     idx = 0;
     saveSessions();
   }
@@ -66,12 +127,11 @@ function renderSessionHistory(): void {
   if (activeSessionIndex < 0) return;
   const session = sessions[activeSessionIndex];
   for (const msg of session.messages) {
-    appendChatBubble(msg.role, msg.content, false);
+    appendChatBubble(msg.role, msg.content, false, msg.images);
   }
   chatMessages.scrollTop = chatMessages.scrollHeight;
+  updateSaveSummary();
 }
-
-loadSessions();
 
 // --- Session List UI ---
 function updateSessionTitle(): void {
@@ -106,6 +166,7 @@ function renderSessionList(): void {
       updateSessionTitle();
       sessionListEl.classList.add("hidden");
       activeChatBubble = null;
+      pendingAssistantImages = [];
       setBusy(false);
     });
     sessionListItems.appendChild(item);
@@ -123,18 +184,23 @@ sessionListBtn.addEventListener("click", () => {
 });
 
 newChatBtn.addEventListener("click", () => {
+  const now = Date.now();
   sessions.unshift({
+    sessionId: makeId("session"),
     articleUrl: currentArticleUrl,
     articleTitle: sessions[activeSessionIndex]?.articleTitle || "新規チャット",
     messages: [],
-    createdAt: Date.now(),
+    createdAt: now,
+    updatedAt: now,
   });
   activeSessionIndex = 0;
   saveSessions();
   chatMessages.innerHTML = "";
   updateSessionTitle();
+  updateSaveSummary();
   sessionListEl.classList.add("hidden");
   activeChatBubble = null;
+  pendingAssistantImages = [];
   setBusy(false);
   chatInput.focus();
 });
@@ -143,25 +209,31 @@ newChatBtn.addEventListener("click", () => {
 function updateTabLock(): void {
   const chatTab = document.querySelector('.tab[data-tab="chat"]') as HTMLButtonElement;
   if (chatTab) {
-    chatTab.disabled = isTranslating;
-    chatTab.style.opacity = isTranslating ? "0.4" : "1";
-    chatTab.style.cursor = isTranslating ? "not-allowed" : "pointer";
+    const locked = isTranslating || saveOnlyMode;
+    chatTab.disabled = locked;
+    chatTab.classList.toggle("hidden-tab", saveOnlyMode);
+    chatTab.style.opacity = locked ? "0.4" : "1";
+    chatTab.style.cursor = locked ? "not-allowed" : "pointer";
   }
 }
 
-function switchTab(tab: "translate" | "chat"): void {
-  if (tab === "chat" && isTranslating) return;
+type ViewTab = "translate" | "chat" | "save";
+
+function switchTab(tab: ViewTab): void {
+  if (tab === "chat" && (isTranslating || saveOnlyMode)) return;
   tabs.forEach((t) => t.classList.toggle("active", t.dataset.tab === tab));
   viewTranslate.classList.toggle("hidden", tab !== "translate");
   viewChat.classList.toggle("hidden", tab !== "chat");
+  viewSave.classList.toggle("hidden", tab !== "save");
   if (tab === "chat") {
     chatInput.focus();
     chatMessages.scrollTop = chatMessages.scrollHeight;
   }
+  if (tab === "save") updateSaveSummary();
 }
 
 tabs.forEach((tab) => {
-  tab.addEventListener("click", () => switchTab(tab.dataset.tab as "translate" | "chat"));
+  tab.addEventListener("click", () => switchTab(tab.dataset.tab as ViewTab));
 });
 
 // --- View State ---
@@ -181,7 +253,124 @@ function unlockScroll(): void {
   isTranslating = false;
   viewTranslate.style.overflowY = "auto";
   updateTabLock();
+  updateSaveSummary();
 }
+
+// --- Local Save ---
+function getStorage(keys: string[]): Promise<Record<string, any>> {
+  return new Promise((resolve) => chrome.storage.local.get(keys, resolve));
+}
+
+function setStorage(values: Record<string, unknown>): Promise<void> {
+  return new Promise((resolve) => chrome.storage.local.set(values, resolve));
+}
+
+async function loadSaveSettings(): Promise<void> {
+  const settings = await getStorage(["xilotSaveBaseDir", "xilotSaveOnlyMode"]);
+  saveBaseDir = settings.xilotSaveBaseDir || "~/xilot";
+  saveOnlyMode = Boolean(settings.xilotSaveOnlyMode);
+  savePathInput.value = saveBaseDir;
+  saveOnlyToggle.checked = saveOnlyMode;
+  updateTabLock();
+  if (saveOnlyMode) switchTab("save");
+  updateSaveSummary();
+}
+
+const saveSettingsReady = loadSaveSettings();
+
+function countSessionImages(session: ChatSession | undefined): number {
+  if (!session) return 0;
+  return session.messages.reduce((count, message) => count + (message.images?.length || 0), 0);
+}
+
+function updateSaveSummary(): void {
+  const blockCount = currentTranslationResult?.blocks.length || currentArticleData?.blocks.length || 0;
+  const session = activeSessionIndex >= 0 ? sessions[activeSessionIndex] : undefined;
+  const messageCount = session?.messages.length || 0;
+  const imageCount = countSessionImages(session) + pendingAssistantImages.length;
+  const sourceImageCount = currentArticleData?.media?.length || 0;
+  saveSummaryEl.textContent = `${blockCount}ブロック / ${messageCount}件 / ${sourceImageCount}投稿画像 / ${imageCount}生成画像`;
+  saveCurrentBtn.disabled = saveBusy || !currentArticleData || !currentTranslationResult;
+}
+
+function setSaveStatus(text: string, kind: "neutral" | "success" | "error" = "neutral"): void {
+  saveStatusEl.textContent = text;
+  saveStatusEl.className = kind;
+}
+
+function persistSavePath(): void {
+  saveBaseDir = savePathInput.value.trim() || "~/xilot";
+  savePathInput.value = saveBaseDir;
+  void setStorage({ xilotSaveBaseDir: saveBaseDir });
+}
+
+async function saveCurrentArticle(): Promise<void> {
+  await saveSettingsReady;
+  persistSavePath();
+
+  if (!currentArticleData || !currentTranslationResult) {
+    setSaveStatus("翻訳完了後に保存できます", "error");
+    updateSaveSummary();
+    return;
+  }
+
+  const session = activeSessionIndex >= 0 ? sessions[activeSessionIndex] : undefined;
+  const payload: LocalSavePayload = {
+    baseDir: saveBaseDir,
+    article: currentArticleData,
+    translation: currentTranslationResult,
+    session,
+  };
+
+  saveBusy = true;
+  updateSaveSummary();
+  setSaveStatus("保存中", "neutral");
+
+  try {
+    const settings = await getStorage(["codexHost", "codexPort", "codexToken"]);
+    const host = settings.codexHost || "127.0.0.1";
+    const port = settings.codexPort || 4501;
+    const token = settings.codexToken || DEFAULT_PROXY_TOKEN;
+    const response = await fetch(`http://${host}:${port}/local-save`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.ok) {
+      throw new Error(result.error || `保存に失敗しました (${response.status})`);
+    }
+    setSaveStatus(`保存済み: ${result.baseDir}`, "success");
+  } catch (error) {
+    setSaveStatus(error instanceof Error ? error.message : "保存に失敗しました", "error");
+  } finally {
+    saveBusy = false;
+    updateSaveSummary();
+  }
+}
+
+savePathInput.addEventListener("change", persistSavePath);
+savePathInput.addEventListener("blur", persistSavePath);
+
+savePathResetBtn.addEventListener("click", () => {
+  savePathInput.value = "~/xilot";
+  persistSavePath();
+  setSaveStatus("", "neutral");
+});
+
+saveOnlyToggle.addEventListener("change", () => {
+  saveOnlyMode = saveOnlyToggle.checked;
+  void setStorage({ xilotSaveOnlyMode: saveOnlyMode });
+  updateTabLock();
+  if (saveOnlyMode) switchTab("save");
+});
+
+saveCurrentBtn.addEventListener("click", () => {
+  void saveCurrentArticle();
+});
 
 // --- Skeleton + Streaming ---
 let streamingBuffer = "";
@@ -323,6 +512,7 @@ function updateProgress(): void {
 }
 
 function finalizeTranslation(result: TranslationResult): void {
+  currentTranslationResult = result;
   currentArticleText = result.blocks.map((b) => b.original).join("\n\n");
   for (const block of result.blocks) {
     const skeleton = translationBlocks.querySelector(`.skeleton-block[data-block-id="${block.blockId}"]`);
@@ -330,6 +520,8 @@ function finalizeTranslation(result: TranslationResult): void {
   }
   translatedCount = streamingBlocks.length;
   updateProgress();
+  updateSaveSummary();
+  if (saveOnlyMode) switchTab("save");
 }
 
 // --- Scroll sync (ratio-based, instant) ---
@@ -409,12 +601,58 @@ function renderMarkdown(text: string): string {
   return marked.parse(text) as string;
 }
 
-function appendChatBubble(role: "user" | "assistant", content: string, save: boolean): HTMLElement {
+function persistChatMessage(role: "user" | "assistant", content: string, images: SessionImage[] = []): void {
+  if (activeSessionIndex < 0) return;
+  const now = Date.now();
+  sessions[activeSessionIndex].messages.push({
+    role,
+    content,
+    createdAt: now,
+    images,
+  });
+  sessions[activeSessionIndex].updatedAt = now;
+  saveSessions();
+  updateSaveSummary();
+}
+
+function appendSavedImages(container: HTMLElement, images: SessionImage[] = []): void {
+  for (const image of images) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "chat-image-wrapper";
+    const img = document.createElement("img");
+    img.src = image.base64.startsWith("data:")
+      ? image.base64
+      : `data:${image.mimeType || "image/png"};base64,${image.base64}`;
+    wrapper.appendChild(img);
+
+    const dlBtn = document.createElement("button");
+    dlBtn.className = "image-download-btn";
+    dlBtn.textContent = "保存";
+    dlBtn.addEventListener("click", () => {
+      const a = document.createElement("a");
+      a.href = img.src;
+      a.download = `${image.id || "xilot-image"}.png`;
+      a.click();
+    });
+    wrapper.appendChild(dlBtn);
+    container.appendChild(wrapper);
+
+    if (image.revisedPrompt) {
+      const caption = document.createElement("p");
+      caption.className = "image-caption";
+      caption.textContent = image.revisedPrompt;
+      container.appendChild(caption);
+    }
+  }
+}
+
+function appendChatBubble(role: "user" | "assistant", content: string, save: boolean, images: SessionImage[] = []): HTMLElement {
   const div = document.createElement("div");
   div.className = `chat-msg ${role}`;
   if (role === "assistant") {
     div.innerHTML = renderMarkdown(content);
     div.querySelectorAll("img").forEach((img) => addImageDownload(img));
+    appendSavedImages(div, images);
   } else {
     div.textContent = content;
   }
@@ -422,8 +660,7 @@ function appendChatBubble(role: "user" | "assistant", content: string, save: boo
   chatMessages.scrollTop = chatMessages.scrollHeight;
 
   if (save && activeSessionIndex >= 0) {
-    sessions[activeSessionIndex].messages.push({ role, content });
-    saveSessions();
+    persistChatMessage(role, content, images);
   }
   return div;
 }
@@ -456,8 +693,9 @@ function startAssistantBubble(): HTMLElement {
 }
 
 function doSendChat(displayText: string, prompt: string, articleContext: string): void {
-  if (chatBusy) return;
+  if (chatBusy || saveOnlyMode) return;
   setBusy(true);
+  pendingAssistantImages = [];
 
   appendChatBubble("user", displayText, true);
   activeChatBubble = startAssistantBubble();
@@ -512,6 +750,12 @@ async function sendToContentScript(tabId: number): Promise<unknown> {
 
 // --- Start ---
 async function startTranslation(): Promise<void> {
+  await Promise.all([sessionsReady, saveSettingsReady]);
+  currentArticleUrl = "";
+  currentArticleText = "";
+  currentArticleData = null;
+  currentTranslationResult = null;
+  updateSaveSummary();
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) { errorMessage.textContent = "アクティブなタブが見つかりません。"; showState("error"); return; }
 
@@ -520,7 +764,11 @@ async function startTranslation(): Promise<void> {
     if (response?.type === "ARTICLE_DATA" && response.data) {
       showState("translating");
       currentArticleUrl = response.data.url;
+      currentArticleData = response.data;
+      currentTranslationResult = null;
       currentArticleText = response.data.blocks.map((b) => b.text).join("\n\n");
+      setSaveStatus("", "neutral");
+      updateSaveSummary();
       articleMeta.innerHTML = response.data.author
         ? `<div class="author">${response.data.author}</div>`
         : "";
@@ -532,7 +780,7 @@ async function startTranslation(): Promise<void> {
 
       chrome.runtime.sendMessage({ type: "TRANSLATE_REQUEST", data: response.data } satisfies MessageType);
     } else {
-      errorMessage.textContent = "X記事が見つかりません。記事ページを開いてください。";
+      errorMessage.textContent = "Xの記事または投稿が見つかりません。対象ページを開いてください。";
       showState("error");
     }
   } catch {
@@ -546,7 +794,7 @@ let streamingText = "";
 
 chrome.runtime.onMessage.addListener((message: MessageType & { block?: TranslatedBlock; progress?: number; total?: number }) => {
   switch (message.type) {
-    case "TRANSLATION_CHUNK_DONE" as any:
+    case "TRANSLATION_CHUNK_DONE":
       if (message.block) {
         const skeleton = translationBlocks.querySelector(`.skeleton-block[data-block-id="${message.block.blockId}"]`);
         if (skeleton) {
@@ -582,8 +830,8 @@ chrome.runtime.onMessage.addListener((message: MessageType & { block?: Translate
       errorMessage.textContent = message.error;
       showState("error");
       break;
-    case "SCROLL_RATIO" as any:
-      syncSidepanelToRatio((message as any).ratio);
+    case "SCROLL_RATIO":
+      syncSidepanelToRatio(message.ratio);
       highlightBlock(message.blockId);
       break;
     case "HOVER_BLOCK":
@@ -600,7 +848,7 @@ chrome.runtime.onMessage.addListener((message: MessageType & { block?: Translate
         chatMessages.scrollTop = chatMessages.scrollHeight;
       }
       break;
-    case "CHAT_PROCESSING" as any:
+    case "CHAT_PROCESSING":
       if (activeChatBubble && !activeChatBubble.querySelector(".thinking-indicator")) {
         const dots = document.createElement("div");
         dots.className = "thinking-indicator";
@@ -629,50 +877,39 @@ chrome.runtime.onMessage.addListener((message: MessageType & { block?: Translate
       const genBubble = chatMessages.querySelector(".image-gen-bubble");
       if (genBubble) genBubble.remove();
 
+      const sessionImage: SessionImage = {
+        id: makeId("image"),
+        base64: message.base64,
+        revisedPrompt: message.revisedPrompt || "",
+        mimeType: "image/png",
+        createdAt: Date.now(),
+      };
+      pendingAssistantImages.push(sessionImage);
+
       const imgBubble = document.createElement("div");
       imgBubble.className = "chat-msg assistant";
-
-      const wrapper = document.createElement("div");
-      wrapper.className = "chat-image-wrapper";
-      const img = document.createElement("img");
-      img.src = `data:image/png;base64,${message.base64}`;
-      wrapper.appendChild(img);
-      const dlBtn = document.createElement("button");
-      dlBtn.className = "image-download-btn";
-      dlBtn.textContent = "⬇ 保存";
-      dlBtn.addEventListener("click", () => {
-        const a = document.createElement("a");
-        a.href = img.src;
-        a.download = `xilot-${Date.now()}.png`;
-        a.click();
-      });
-      wrapper.appendChild(dlBtn);
-      imgBubble.appendChild(wrapper);
-
-      if (message.revisedPrompt) {
-        const caption = document.createElement("p");
-        caption.className = "image-caption";
-        caption.textContent = message.revisedPrompt;
-        imgBubble.appendChild(caption);
-      }
-
+      appendSavedImages(imgBubble, [sessionImage]);
       chatMessages.appendChild(imgBubble);
       chatMessages.scrollTop = chatMessages.scrollHeight;
-      streamingText += "\n\n[画像生成済み]\n\n";
+      updateSaveSummary();
       break;
     }
     case "CHAT_COMPLETE":
       if (activeChatBubble) {
         const finalContent = streamingText || message.text;
-        activeChatBubble.innerHTML = renderMarkdown(finalContent);
-        activeChatBubble.querySelectorAll("img").forEach((img) => addImageDownload(img as HTMLImageElement));
+        if (finalContent.trim()) {
+          activeChatBubble.innerHTML = renderMarkdown(finalContent);
+          activeChatBubble.querySelectorAll("img").forEach((img) => addImageDownload(img as HTMLImageElement));
+        } else {
+          activeChatBubble.remove();
+        }
         activeChatBubble = null;
 
-        if (activeSessionIndex >= 0) {
+        if (activeSessionIndex >= 0 && (finalContent.trim() || pendingAssistantImages.length > 0)) {
           const safeContent = finalContent.replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/g, "[画像]");
-          sessions[activeSessionIndex].messages.push({ role: "assistant", content: safeContent });
-          saveSessions();
+          persistChatMessage("assistant", safeContent, pendingAssistantImages);
         }
+        pendingAssistantImages = [];
         streamingText = "";
       }
       setBusy(false);
@@ -684,6 +921,7 @@ chrome.runtime.onMessage.addListener((message: MessageType & { block?: Translate
         activeChatBubble.classList.add("error");
         activeChatBubble = null;
       }
+      pendingAssistantImages = [];
       setBusy(false);
       break;
   }

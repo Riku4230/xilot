@@ -3,8 +3,8 @@
   "name": "Xilot",
   "version": "0.1.0",
   "description": "Translate X (Twitter) articles into Japanese using AI",
-  "permissions": ["sidePanel", "activeTab", "storage", "scripting"],
-  "host_permissions": ["*://x.com/*", "*://twitter.com/*"],
+  "permissions": ["sidePanel", "activeTab", "storage", "scripting", "unlimitedStorage"],
+  "host_permissions": ["*://x.com/*", "*://twitter.com/*", "http://127.0.0.1:4501/*", "http://localhost:4501/*"],
   "background": {
     "service_worker": "background.js"
   },

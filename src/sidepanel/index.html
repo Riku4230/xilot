@@ -11,6 +11,7 @@
     <nav id="tab-bar">
       <button class="tab active" data-tab="translate">翻訳</button>
       <button class="tab" data-tab="chat">チャット</button>
+      <button class="tab" data-tab="save">保存</button>
     </nav>
 
     <div id="view-translate" class="view">
@@ -19,7 +20,7 @@
           <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#c0c8d0" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12.87 15.07l-2.54-2.51.03-.03A17.52 17.52 0 0014.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/>
           </svg>
-          <p>X記事を開いてXilotアイコンをクリック</p>
+          <p>Xの記事または投稿を開いてXilotアイコンをクリック</p>
         </div>
       </div>
 
@@ -54,12 +55,33 @@
       </div>
       <div id="chat-messages"></div>
       <div id="chat-input-area">
-        <textarea id="chat-input" placeholder="この記事について質問する..." rows="1"></textarea>
+        <textarea id="chat-input" placeholder="この内容について質問する..." rows="1"></textarea>
         <button id="chat-send">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
             <path d="M3 13V3l11 5-11 5z" fill="currentColor"/>
           </svg>
         </button>
+      </div>
+    </div>
+
+    <div id="view-save" class="view hidden">
+      <div id="save-panel">
+        <div class="save-field">
+          <label for="save-path-input">保存先</label>
+          <div class="save-path-row">
+            <input id="save-path-input" type="text" value="~/xilot" spellcheck="false" />
+            <button id="save-path-reset" title="初期値に戻す">初期値</button>
+          </div>
+        </div>
+
+        <label id="save-only-row">
+          <input id="save-only-toggle" type="checkbox" />
+          <span>保存専用モード</span>
+        </label>
+
+        <div id="save-summary"></div>
+        <button id="save-current-btn">保存</button>
+        <div id="save-status" aria-live="polite"></div>
       </div>
     </div>
   </div>

@@ -22,7 +22,11 @@ let warmupPromise: Promise<CodexClient> | null = null;
 function warmup(): Promise<CodexClient> {
   if (!warmupPromise) {
     warmupPromise = (async () => {
-      const settings = await chrome.storage.local.get(["codexHost", "codexPort", "codexToken"]);
+      const settings = await chrome.storage.local.get(["codexHost", "codexPort", "codexToken"]) as {
+        codexHost?: string;
+        codexPort?: number;
+        codexToken?: string;
+      };
       const host = settings.codexHost || "127.0.0.1";
       const port = settings.codexPort || 4501;
       const token = settings.codexToken || DEFAULT_PROXY_TOKEN;
@@ -172,15 +176,15 @@ async function handleChat(text: string, articleContext: string): Promise<void> {
   console.log("[Xilot] handleChat:", text.slice(0, 100));
 
   const prompt = articleContext
-    ? `あなたはユーザーのリサーチアシスタントです。以下の記事の内容を踏まえて質問に答えてください。
+    ? `あなたはユーザーのリサーチアシスタントです。以下のX記事または投稿の内容を踏まえて質問に答えてください。
 
 ルール:
-- 記事に書かれていることはそのまま回答
-- 記事に書かれていないこと、最新の情報、ユーザーが知らないことについて聞かれた場合はWeb検索を行って回答
+- 対象に書かれていることはそのまま回答
+- 対象に書かれていないこと、最新の情報、ユーザーが知らないことについて聞かれた場合はWeb検索を行って回答
 - 画像の生成を依頼された場合はimage_genツールを使って生成すること
 - 回答は日本語で
 
-記事の内容:
+対象の内容:
 ${articleContext}
 
 ユーザーの質問: ${text}`

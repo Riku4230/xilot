@@ -52,6 +52,10 @@ body {
   border-bottom-color: #1d9bf0;
 }
 
+.tab.hidden-tab {
+  display: none;
+}
+
 /* ===== Views ===== */
 
 .view {
@@ -648,6 +652,121 @@ body {
 
 #view-chat.hidden {
   display: none !important;
+}
+
+#view-save {
+  padding: 18px 16px;
+}
+
+#save-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.save-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.save-field label,
+#save-only-row {
+  color: #536471;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.save-path-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+#save-path-input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid #e1e8ed;
+  border-radius: 8px;
+  padding: 9px 10px;
+  font-size: 13px;
+  font-family: "SF Mono", Monaco, monospace;
+  outline: none;
+}
+
+#save-path-input:focus {
+  border-color: #1d9bf0;
+  box-shadow: 0 0 0 2px rgba(29, 155, 240, 0.12);
+}
+
+#save-path-reset {
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid #e1e8ed;
+  background: #fff;
+  color: #536471;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#save-only-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+#save-only-toggle {
+  width: 16px;
+  height: 16px;
+  accent-color: #1d9bf0;
+}
+
+#save-summary {
+  border: 1px solid #e1e8ed;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f7f9f9;
+  color: #536471;
+  font-size: 13px;
+}
+
+#save-current-btn {
+  height: 42px;
+  border: none;
+  border-radius: 8px;
+  background: #0f1419;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+#save-current-btn:hover {
+  background: #292f33;
+}
+
+#save-current-btn:disabled {
+  background: #cfd9de;
+  cursor: not-allowed;
+}
+
+#save-status {
+  min-height: 20px;
+  color: #536471;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+#save-status.success {
+  color: #008a45;
+}
+
+#save-status.error {
+  color: #e0245e;
 }
 
 #chat-messages {
